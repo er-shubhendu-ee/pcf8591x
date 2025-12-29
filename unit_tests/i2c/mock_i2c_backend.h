@@ -20,12 +20,13 @@ void mock_i2c_register_device(uint16_t slaveAddr);
 void mock_i2c_reset(void);
 
 /* Port functions (plug into driver_i2c_comm_port_t) */
-driver_i2c_Status_t mock_i2c_init(driver_i2c_comm_port_t *port);
-driver_i2c_Status_t mock_i2c_deinit(driver_i2c_comm_port_t *port);
-driver_i2c_Status_t mock_i2c_write(void *ctx, uint16_t slaveAddr, bool is10BitAddr, uint8_t *pData,
-                                   uint8_t *pLen);
-driver_i2c_Status_t mock_i2c_read(void *ctx, uint16_t slaveAddr, bool is10BitAddr, uint8_t *pData,
-                                  uint8_t *pLen);
+driver_i2c_Status_t mock_i2c_init(void* pvPort);
+driver_i2c_Status_t mock_i2c_deinit(void* pvPort);
+driver_i2c_Status_t mock_i2c_write(void* ctx, uint16_t slaveAddr, bool is10BitAddr, uint8_t* pData,
+                                   uint8_t* pLen);
+driver_i2c_Status_t mock_i2c_read(void* ctx, uint16_t slaveAddr, bool is10BitAddr, uint8_t* pData,
+                                  uint8_t* pLen);
+uint64_t mock_i2c_get_timestamp(void);
 bool mock_i2c_is_timeout(uint64_t start, uint64_t timeout);
 
 #endif

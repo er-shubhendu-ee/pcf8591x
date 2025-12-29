@@ -9,18 +9,59 @@
  *
  **/
 
+//
+#include "driver_i2c.h"
+
+//
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
-
-//
-#include "driver_i2c.h"
 
 #define TAG "DRIVER_I2C"
 
 #ifndef LOG_LEVEL
-#define LOG_LEVEL 3
+
+#define LOG_LEVEL_NONE 0
+#define LOG_LEVEL_ERROR 1
+#define LOG_LEVEL_INFO 2
+#define LOG_LEVEL_DEBUG 3
+
+#define LOG_LEVEL LOG_LEVEL_DEBUG
+#endif
+
+#if LOG_LEVEL < LOG_LEVEL_INFO
+#define DRIVER_I2C_LOGI(...) \
+    do {                     \
+    } while (0)
+#else
+#define DRIVER_I2C_LOGI(tag, fmt, ...)                                           \
+    do {                                                                         \
+        printf("\x1b[32m%s:%d: " fmt "\x1b[0m\n", tag, __LINE__, ##__VA_ARGS__); \
+    } while (0)
+#endif
+
+#if LOG_LEVEL < LOG_LEVEL_DEBUG
+#define DRIVER_I2C_LOGD(...) \
+    do {                     \
+    } while (0)
+#else
+#define DRIVER_I2C_LOGD(tag, fmt, ...)                                           \
+    do {                                                                         \
+        printf("\x1b[34m%s:%d: " fmt "\x1b[0m\n", tag, __LINE__, ##__VA_ARGS__); \
+    } while (0)
+#endif
+
+#if LOG_LEVEL < LOG_LEVEL_ERROR
+#define DRIVER_I2C_LOGE(...) \
+    do {                     \
+    } while (0)
+#else
+#define DRIVER_I2C_LOGE(tag, fmt, ...)                                           \
+    do {                                                                         \
+        printf("\x1b[31m%s:%d: " fmt "\x1b[0m\n", tag, __LINE__, ##__VA_ARGS__); \
+    } while (0)
 #endif
 
 #define I2C_TXN_DATA_MAX_LEN 127
@@ -32,12 +73,12 @@ typedef struct {
     };
     driver_i2c_comm_port_t commPort;
     driver_i2c_txnData_t txnData;
-} I2CDriverStruct_t;
-I2CDriverStruct_t gInstanceArr[DRIVER_I2C_INSTANCE_COUNT];
+} I2CInstanceStruct_t;
+I2CInstanceStruct_t gInstanceArr[DRIVER_I2C_INSTANCE_COUNT];
 
 static bool gIsDriverInitialized;
 
-driver_i2c_Status_t driver_i2c_init(driver_i2c_comm_port_t *pI2CComPortDef) {
+driver_i2c_Status_t driver_i2c_init(driver_i2c_comm_port_t* pI2CComPortDef) {
     static driver_i2c_Status_t exeStatus = DRIVER_I2C_STATUS_BUSY;
 
     if (NULL == pI2CComPortDef) {
@@ -45,17 +86,22 @@ driver_i2c_Status_t driver_i2c_init(driver_i2c_comm_port_t *pI2CComPortDef) {
         goto label_exitPoint;
     }
 
-    exeStatus = port_i2c_init(pI2CComPortDef);
+    if (!pI2CComPortDef->portInitFn) {
+        exeStatus = DRIVER_I2C_STATUS_ERROR_NULL_ARG;
+        goto label_exitPoint;
+    }
+
+    exeStatus = pI2CComPortDef->portInitFn((void*)pI2CComPortDef->portInitFn);
 
     if (DRIVER_I2C_STATUS_OK == exeStatus) {
-        gInstanceArr.gIsDriverInitialized = true;
+        gIsDriverInitialized = true;
     }
 
 label_exitPoint:
     return exeStatus;
 }
 
-driver_i2c_Status_t driver_i2c_deinit(driver_i2c_comm_port_t *pI2CComPortDef) {
+driver_i2c_Status_t driver_i2c_deinit(driver_i2c_comm_port_t* pI2CComPortDef) {
     static driver_i2c_Status_t exeStatus = DRIVER_I2C_STATUS_BUSY;
 
     if (NULL == pI2CComPortDef) {
@@ -63,15 +109,22 @@ driver_i2c_Status_t driver_i2c_deinit(driver_i2c_comm_port_t *pI2CComPortDef) {
         goto label_exitPoint;
     }
 
-    exeStatus = port_i2c_deinit(pI2CComPortDef);
-    memset(&gInstanceArr, 0, sizeof(gInstanceArr));
+    if (!pI2CComPortDef->portDeinitFn) {
+        exeStatus = DRIVER_I2C_STATUS_ERROR_NULL_ARG;
+        goto label_exitPoint;
+    }
+
+    exeStatus = pI2CComPortDef->portInitFn((void*)pI2CComPortDef->portDeinitFn);
+
+    memset(gInstanceArr, 0, sizeof(gInstanceArr));
+    gIsDriverInitialized = false;
 
 label_exitPoint:
     return exeStatus;
 }
 
-driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
-                                        driver_i2c_txnData_t *pTxnData) {
+driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t* pI2CComPortDef,
+                                        driver_i2c_txnData_t* pTxnData) {
     typedef enum {
         DRIVER_I2C_TXN_STATE_IDLE = 0,
         DRIVER_I2C_TXN_STATE_WAIT,
@@ -87,7 +140,7 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
     static uint64_t timeout = 0;
     static uint16_t slaveAddr = 0;
     static bool isSlaveAddr10Bit = false;
-    static void *pI2CContext = NULL;
+    static void* pI2CContext = NULL;
     static uint8_t regAddrBuff[sizeof(double)];
     static uint8_t regAddrSize = 0;
     static uint8_t dataBuff[I2C_TXN_DATA_MAX_LEN];
@@ -96,29 +149,31 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
 
     if ((NULL == pI2CComPortDef) || (NULL == pTxnData)) {
 #if LOG_LEVEL >= LOG_LEVEL_ERROR
-        SERVICE_LOGE(TAG, "Error: Null argument(s).");
+        DRIVER_I2C_LOGE(TAG, "Error: Null argument(s).");
 #endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
         return DRIVER_I2C_STATUS_ERROR_NULL_ARG;
     }
 
-    if (!gInstanceArr.gIsDriverInitialized) {
+    if (!gIsDriverInitialized) {
 #if LOG_LEVEL >= LOG_LEVEL_ERROR
-        SERVICE_LOGE(TAG, "Error: Driver not initialized.");
+        DRIVER_I2C_LOGE(TAG, "Error: Driver not initialized.");
 #endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
         return DRIVER_I2C_STATUS_ERROR_DRV_INIT;
     }
+
+    // TODO: test null for r/w/timer functions
 
     switch (i2cTransferState[0]) {
         case DRIVER_I2C_TXN_STATE_IDLE:
             memset(regAddrBuff, 0, sizeof(regAddrBuff));
             memset(dataBuff, 0, sizeof(dataBuff));
-            startMillis = port_timer_GetMillis();
+            startMillis = pI2CComPortDef->getTimestamp();  // port_timer_GetMillis();
 
             if (pTxnData->dataBuffSize > I2C_TXN_DATA_MAX_LEN) {
 #if LOG_LEVEL >= LOG_LEVEL_ERROR
-                SERVICE_LOGE(TAG,
-                             "Error: Max PDU size exceeded, make data length shorter,below %d.",
-                             I2C_TXN_DATA_MAX_LEN);
+                DRIVER_I2C_LOGE(TAG,
+                                "Error: Max PDU size exceeded, make data length shorter,below %d.",
+                                I2C_TXN_DATA_MAX_LEN);
 #endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
                 i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                 exeStatus = DRIVER_I2C_STATUS_ERROR_MAX_PDU;
@@ -128,7 +183,7 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
 
             // setting up comm params
             timeout = pTxnData->timeout;
-            pI2CContext = pI2CComPortDef->pvCtx;
+            pI2CContext = pI2CComPortDef->instanceConfig.pvCtx;
             slaveAddr = pTxnData->slaveAddr;
             isSlaveAddr10Bit = pTxnData->is10BitAddr;
             regAddrSize = pTxnData->regAddrSize;
@@ -166,18 +221,18 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
         case DRIVER_I2C_TXN_STATE_WAIT:
             switch (i2cTransferState[1]) {
                 case DRIVER_I2C_TXN_STATE_WRITE_REG_ADDR:
-                    exeStatus = port_i2c_write_master(pI2CContext, slaveAddr, isSlaveAddr10Bit,
-                                                      regAddrBuff, &regAddrSize);
+                    exeStatus = pI2CComPortDef->portWriteMasterFn(
+                        pI2CContext, slaveAddr, isSlaveAddr10Bit, regAddrBuff, &regAddrSize);
                     break;
 
                 case DRIVER_I2C_TXN_STATE_WRITE_DATA_BYTES:
-                    exeStatus = port_i2c_write_master(pI2CContext, slaveAddr, isSlaveAddr10Bit,
-                                                      dataBuff, &dataBuffSize);
+                    exeStatus = pI2CComPortDef->portWriteMasterFn(
+                        pI2CContext, slaveAddr, isSlaveAddr10Bit, dataBuff, &dataBuffSize);
                     break;
 
                 case DRIVER_I2C_TXN_STATE_READ_DATA_BYTES:
-                    exeStatus = port_i2c_read_master(pI2CContext, slaveAddr, isSlaveAddr10Bit,
-                                                     dataBuff, &dataBuffSize);
+                    exeStatus = pI2CComPortDef->portReadMasterFn(
+                        pI2CContext, slaveAddr, isSlaveAddr10Bit, dataBuff, &dataBuffSize);
                     break;
 
                 default:
@@ -194,7 +249,7 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
                     break;
 
                 case DRIVER_I2C_STATUS_BUSY:
-                    if (is_timeout(startMillis, timeout)) {
+                    if (pI2CComPortDef->portIsTimeoutFn(startMillis, timeout)) {
                         exeStatus = DRIVER_I2C_STATUS_ERROR_TIMEOUT;
                         i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                     }
@@ -202,8 +257,8 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
 
                 default:
 #if LOG_LEVEL >= LOG_LEVEL_ERROR
-                    SERVICE_LOGE(TAG, "Error: Writing mem addr");
-#endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
+                    DRIVER_I2C_LOGD(TAG, "Slave NACK");
+#endif /* @end LOG_LEVEL>=LOG_LEVEL_DEBUG */
                     exeStatus = DRIVER_I2C_STATUS_ERROR_INVALID_STATE;
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                     break;
@@ -213,8 +268,8 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
             break;
 
         case DRIVER_I2C_TXN_STATE_WRITE_REG_ADDR:
-            exeStatus = port_i2c_write_master(pI2CContext, slaveAddr, isSlaveAddr10Bit, regAddrBuff,
-                                              &regAddrSize);
+            exeStatus = pI2CComPortDef->portWriteMasterFn(pI2CContext, slaveAddr, isSlaveAddr10Bit,
+                                                          regAddrBuff, &regAddrSize);
             switch (exeStatus) {
                 case DRIVER_I2C_STATUS_OK:
                     switch (pTxnData->txnType) {
@@ -237,8 +292,8 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
 
                 default:
 #if LOG_LEVEL >= LOG_LEVEL_ERROR
-                    SERVICE_LOGE(TAG, "Error: Writing slave: %u", pTxnData->slaveAddr);
-#endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
+                    DRIVER_I2C_LOGD(TAG, "Slave NACK");
+#endif /* @end LOG_LEVEL>=LOG_LEVEL_DEBUG */
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                     break;
             }
@@ -247,8 +302,8 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
             break;
 
         case DRIVER_I2C_TXN_STATE_WRITE_DATA_BYTES:
-            exeStatus = port_i2c_write_master(pI2CContext, slaveAddr, isSlaveAddr10Bit, dataBuff,
-                                              &dataBuffSize);
+            exeStatus = pI2CComPortDef->portWriteMasterFn(pI2CContext, slaveAddr, isSlaveAddr10Bit,
+                                                          dataBuff, &dataBuffSize);
             switch (exeStatus) {
                 case DRIVER_I2C_STATUS_OK:
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
@@ -260,8 +315,8 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
 
                 default:
 #if LOG_LEVEL >= LOG_LEVEL_ERROR
-                    SERVICE_LOGE(TAG, "Error: Writing memory addr: %lu", pTxnData->slaveAddr);
-#endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
+                    DRIVER_I2C_LOGD(TAG, "Slave NACK");
+#endif /* @end LOG_LEVEL>=LOG_LEVEL_DEBUG */
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                     break;
             }
@@ -270,24 +325,27 @@ driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CComPortDef,
             break;
 
         case DRIVER_I2C_TXN_STATE_READ_DATA_BYTES:
-            exeStatus = port_i2c_read_master(pI2CContext, slaveAddr, isSlaveAddr10Bit, dataBuff,
-                                             &dataBuffSize);
+            exeStatus = pI2CComPortDef->portReadMasterFn(pI2CContext, slaveAddr, isSlaveAddr10Bit,
+                                                         dataBuff, &dataBuffSize);
             switch (exeStatus) {
-                case DRIVER_I2C_STATUS_OK:
+                case DRIVER_I2C_STATUS_OK: {
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                     memcpy(pTxnData->pDataBuff, dataBuff, dataBuffSize);
                     break;
-                case DRIVER_I2C_STATUS_BUSY:
+                }
+                case DRIVER_I2C_STATUS_BUSY: {
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_WAIT;
                     i2cTransferState[1] = DRIVER_I2C_TXN_STATE_EXIT;
                     break;
+                }
 
-                default:
-#if LOG_LEVEL >= LOG_LEVEL_ERROR
-                    SERVICE_LOGE(TAG, "Error: Writing mem addr");
-#endif /* @end LOG_LEVEL>=LOG_LEVEL_ERROR */
+                default: {
+#if LOG_LEVEL >= LOG_LEVEL_DEBUG
+                    DRIVER_I2C_LOGD(TAG, "Slave NACK");
+#endif /* @end LOG_LEVEL>=LOG_LEVEL_DEBUG */
                     i2cTransferState[0] = DRIVER_I2C_TXN_STATE_EXIT;
                     break;
+                }
             }
 
             returnStatus = DRIVER_I2C_STATUS_BUSY;

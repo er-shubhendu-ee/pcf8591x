@@ -49,20 +49,21 @@ typedef enum driver_i2c_tagTxnType {
     DRIVER_I2C_TXN_TYPE_CMD_READ   /**< Command read transaction */
 } driver_i2c_txnType_t;
 
-typedef struct driver_i2c_tagTxnHandle driver_i2c_comm_port_t;
+// typedef struct driver_i2c_tagTxnHandle driver_i2c_comm_port_t;
 
-typedef driver_i2c_Status_t (*driver_i2c_initFn_t)(driver_i2c_comm_port_t *pI2CCommPortDef);
-typedef driver_i2c_Status_t (*driver_i2c_deinitFn_t)(driver_i2c_comm_port_t *pI2CCommPortDef);
-typedef driver_i2c_Status_t (*driver_i2c_writeMasterFn_t)(
-    void *pvCtx, uint16_t slaveAddr, bool is10BitAddr, uint8_t *pDataBuff,
-    uint8_t *pDataBuffSize); /* pDataBuffSize is limited to 8-bit by design (max 255 bytes per
+typedef int (*driver_i2c_initFn_t)(void* pvI2CCommPortDef);
+typedef int (*driver_i2c_deinitFn_t)(void* pvI2CCommPortDef);
+typedef int (*driver_i2c_writeMasterFn_t)(
+    void* pvCtx, uint16_t slaveAddr, bool is10BitAddr, uint8_t* pDataBuff,
+    uint8_t* pDataBuffSize); /* pDataBuffSize is limited to 8-bit by design (max 255 bytes per
                                 transfer) */
 
-typedef driver_i2c_Status_t (*driver_i2c_readMasterFn_t)(
-    void *pvCtx, uint16_t slaveAddr, bool is10BitAddr, uint8_t *pDataBuff,
-    uint8_t *pDataBuffSize); /* pDataBuffSize is limited to 8-bit by design (max 255 bytes per
+typedef int (*driver_i2c_readMasterFn_t)(
+    void* pvCtx, uint16_t slaveAddr, bool is10BitAddr, uint8_t* pDataBuff,
+    uint8_t* pDataBuffSize); /* pDataBuffSize is limited to 8-bit by design (max 255 bytes per
                                 transfer) */
 typedef bool (*driver_i2c_isTimeoutFn_t)(uint64_t startMillis, uint64_t timeout);
+typedef uint64_t (*driver_i2c_getTimestampFn_t)(void);
 
 /* Example timeout function ::
 static bool is_timeout(uint64_t startMillis, uint64_t timeout) {
@@ -73,23 +74,30 @@ return false;
 }
 } */
 
-/**
- * @brief Transaction handle structure.
- */
-typedef struct driver_i2c_tagTxnHandle {
-    void *pvCtx;
-    uint16_t i2cInstId; /*!< I2C identifier */
-    uint16_t sda;       /*!< I2C SDA GPIO port and pin */
-    uint16_t scl;       /*!< I2C SCL GPIO port and pin */
+typedef struct driver_i2c_tagInstanceConfig {
+    void* pvCtx;
+    uint16_t id;      /*!< I2C identifier */
+    uint16_t sdaPort; /*!< I2C SDA GPIO port and pin */
+    uint16_t sdaPin;  /*!< I2C SDA GPIO port and pin */
+    uint16_t sclPort; /*!< I2C SCL GPIO port and pin */
+    uint16_t sclPin;  /*!< I2C SCL GPIO port and pin */
     struct {
         uint8_t isClockStretching : 1;        //!< (applicable only for master role)
         uint8_t isBroadCastingSupported : 1;  //!< (applicable only for slave role)
     } flags;
+} driver_i2c_InstanceConfig_t;
+
+/**
+ * @brief Transaction handle structure.
+ */
+typedef struct driver_i2c_tagTxnHandle {
+    driver_i2c_InstanceConfig_t instanceConfig;
     driver_i2c_initFn_t portInitFn;
     driver_i2c_deinitFn_t portDeinitFn;
     driver_i2c_writeMasterFn_t portWriteMasterFn;
     driver_i2c_readMasterFn_t portReadMasterFn;
-    driver_i2c_isTimeoutFn_t portTimeoutFn;
+    driver_i2c_getTimestampFn_t getTimestamp;
+    driver_i2c_isTimeoutFn_t portIsTimeoutFn;
 } driver_i2c_comm_port_t;
 
 /**
@@ -102,13 +110,13 @@ typedef struct driver_i2c_tagTxnData {
     };
     uint8_t endianness;           /*!< Data endianness */
     driver_i2c_txnType_t txnType; /*!< Type of transaction */
-    uint8_t *pRegAddrBuff;        /*!< Memory address */
+    uint8_t* pRegAddrBuff;        /*!< Memory address */
     uint8_t regAddrSize;          /*!< Memory address size */
     union {
-        uint8_t *pDataBuff;         /*!< Legacy generic pointer (for backward compatibility).
+        uint8_t* pDataBuff;         /*!< Legacy generic pointer (for backward compatibility).
                  Prefer pTxDataBuff or pRxDataBuff in new code. */
-        uint8_t *pRxDataBuff;       /*!< Pointer for RX operations (data will be written here). */
-        const uint8_t *pTxDataBuff; /*!< Pointer for TX operations (data will not be modified). */
+        uint8_t* pRxDataBuff;       /*!< Pointer for RX operations (data will be written here). */
+        const uint8_t* pTxDataBuff; /*!< Pointer for TX operations (data will not be modified). */
     };
     uint16_t dataBuffSize; /*!< Length of transaction data */
     uint16_t timeout;      /*!< Timeout for the transaction in milliseconds*/
@@ -127,7 +135,7 @@ extern "C" {
  * @param pI2CCommPortDef Pointer to the transaction handle.
  * @return Status of the initialization (success, busy, error, timeout).
  */
-driver_i2c_Status_t driver_i2c_init(driver_i2c_comm_port_t *pI2CCommPortDef);
+driver_i2c_Status_t driver_i2c_init(driver_i2c_comm_port_t* pI2CCommPortDef);
 
 /**
  * @brief Deinitializes the I2C peripheral.
@@ -137,7 +145,7 @@ driver_i2c_Status_t driver_i2c_init(driver_i2c_comm_port_t *pI2CCommPortDef);
  * @param pI2CCommPortDef Pointer to the transaction handle.
  * @return Status of the deinitialization (success, busy, error, timeout).
  */
-driver_i2c_Status_t driver_i2c_deinit(driver_i2c_comm_port_t *pI2CCommPortDef);
+driver_i2c_Status_t driver_i2c_deinit(driver_i2c_comm_port_t* pI2CCommPortDef);
 
 /**
  * @brief Initiates an I2C data transfer.
@@ -149,14 +157,14 @@ driver_i2c_Status_t driver_i2c_deinit(driver_i2c_comm_port_t *pI2CCommPortDef);
  * @param pTxnData Pointer to the transaction data.
  * @return Status of the transaction (success, busy, error, timeout).
  */
-driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t *pI2CCommPortDef,
-                                        driver_i2c_txnData_t *pTxnData);
+driver_i2c_Status_t driver_i2c_transfer(driver_i2c_comm_port_t* pI2CCommPortDef,
+                                        driver_i2c_txnData_t* pTxnData);
 
-driver_i2c_Status_t driver_i2c_transfer_async(driver_i2c_comm_port_t *pI2CCommPortDef,
-                                              driver_i2c_txnData_t *pTxnData);
+driver_i2c_Status_t driver_i2c_transfer_async(driver_i2c_comm_port_t* pI2CCommPortDef,
+                                              driver_i2c_txnData_t* pTxnData);
 
-driver_i2c_Status_t driver_i2c_abort(driver_i2c_comm_port_t *pI2CCommPortDef,
-                                     driver_i2c_txnData_t *pTxnData);
+driver_i2c_Status_t driver_i2c_abort(driver_i2c_comm_port_t* pI2CCommPortDef,
+                                     driver_i2c_txnData_t* pTxnData);
 
 #ifdef __cplusplus
 }
